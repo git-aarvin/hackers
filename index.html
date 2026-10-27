@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<meta name="description" content="Hacker News, à la Lobsters.">
+		<meta name="theme-color" content="#fb651e">
+		<title>Hackers</title>
+		<link rel="icon" href="favicon.svg" type="image/svg+xml">
+		<script>
+(() => {
+	try {
+		const stored = localStorage.getItem("hackers:theme");
+		const mode = ["light", "dark", "system"].includes(stored)
+			? stored
+			: "system";
+		const dark = mode === "dark"
+			|| (mode === "system"
+				&& matchMedia("(prefers-color-scheme: dark)").matches);
+		document.documentElement.dataset.theme = dark ? "dark" : "light";
+		document.documentElement.dataset.themeMode = mode;
+	} catch {}
+})();
+		</script>
+		<link rel="stylesheet" href="styles.css">
+	</head>
+	<body>
+		<div id="app"></div><noscript
+		><p style="max-width:40rem;margin:2rem auto;padding:0 1rem;font:16px/1.5 'helvetica neue',arial,sans-serif;">
+				Hackers needs JavaScript to load stories from the Hacker News API.
+			</p></noscript><script src="index.js" defer></script>
+	</body>
+</html>

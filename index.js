@@ -2,7 +2,14 @@ import { html, make } from "./vendor.js";
 const ORIGIN = "https://hacker-news.firebaseio.com/v0";
 const SIZE = 25;
 const LIMIT = 500;
-const WORKERS = 14;
+const WORKERS = 8;
+const COMMENT_WORKERS = 8;
+const ITEM_TTL = 5 * 60 * 1000;
+const PAGE_TTL = 5 * 60 * 1000;
+const LIST_TTL = 60 * 1000;
+const ITEM_CACHE = 2000;
+const TIMEOUT = 15 * 1000;
+const RETRIES = 2;
 const KEY = "hackers:theme";
 const mount = document.getElementById("app");
 const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -27,6 +34,7 @@ const state = {
 	comments: null,
 	collapsed: new Set(),
 	token: 0,
+	controller: new AbortController(),
 };
 const format = new Intl.NumberFormat();
 let shown = null;
@@ -306,8 +314,17 @@ const Tags = (item) => {
 		)
 	}</ul>`;
 };
+const StoryFailure = (item) =>
+	html`<li class="story failed"><div class="liner"><div class="details"><span class="gone">${
+		item.deleted ? "Story deleted." : "Story unavailable."
+	}</span>${Gap()}${
+		item.deleted
+			? null
+			: html`<button type="button" class="plain" data-act="story" data-id="${item.id}">Retry</button>`
+	}</div></div></li>`;
 const Story = (item, showComments = true) => {
 	if (item === false) return null;
+	if (item?.failed) return StoryFailure(item);
 	if (!item) return Placeholder();
 	const source = link(item.url);
 	const href = source || `#/item/${item.id}`;
@@ -391,6 +408,20 @@ const Pager = (list) => {
 	} </nav>`;
 };
 const Comment = (node, submitter) => {
+	if (node.failed) {
+		const retry = state.comments?.status === "ready" && !node.missing;
+		return html`<li class="subtree" id="comment-${node.id}"><div class="comment bad"><div class="details"><div class="byline"><span class="gone">${
+			node.missing ? "deleted" : "unavailable"
+		}</span>${Gap()}<span class="summary">${
+			node.missing
+				? "This comment is no longer available."
+				: "This comment could not be loaded."
+		}</span>${
+			retry
+				? html`${Gap()}<button type="button" class="plain" data-act="comment" data-id="${node.id}">Retry</button>`
+				: null
+		}</div></div></div></li>`;
+	}
 	const item = node.item;
 	const children = node.children;
 	const collapsed = state.collapsed.has(item.id);
@@ -399,15 +430,16 @@ const Comment = (node, submitter) => {
 	const replies = collapsed ? node.size - 1 : 0;
 	const action = collapsed ? "Expand" : "Collapse";
 	const cache = state.comments?.views;
+	const epoch = state.comments?.epoch || 0;
 	const hit = cache?.get(item.id);
 	const clipped = !!node.clipped;
 	const stamp = clipped ? state.comments?.epoch || 0 : 0;
 	if (
 		hit && hit.collapsed === collapsed && hit.size === node.size
 		&& hit.submitter === submitter && hit.clipped === clipped
-		&& hit.stamp === stamp
+		&& hit.stamp === stamp && hit.epoch === epoch
 	) return hit.view;
-	const view = html`<li class="subtree"><div class="comment ${
+	const view = html`<li class="subtree" id="comment-${item.id}"><div class="comment ${
 		item.dead ? "bad" : ""
 	}"><div class="voters"><button type="button" class="folder" data-act="toggle" data-id="${item.id}" aria-expanded="${
 		collapsed ? "false" : "true"
@@ -456,6 +488,7 @@ const Comment = (node, submitter) => {
 		submitter,
 		clipped,
 		stamp,
+		epoch,
 		view,
 	});
 	return view;
@@ -476,7 +509,7 @@ const Comments = (story) => {
 			)
 		}</section>`;
 	}
-	if (!comments.tree.length) {
+	if (!comments.nodes.length) {
 		if (comments.status === "loading") {
 			const progress = comments.loaded
 				? ` — ${format.format(comments.loaded)} loaded`
@@ -485,29 +518,22 @@ const Comments = (story) => {
 				Loading(`Loading ${label(comments.total)}${progress}`)
 			}</section>`;
 		}
-		if (comments.failures) {
-			return html`<section id="comments"><h2 class="hidden">Comments</h2>${
-				Failure(
-					"Comments unavailable",
-					"We couldn't load this discussion. Check your connection and try again.",
-					"retry",
-				)
-			}</section>`;
-		}
 		return html`<section id="comments"><h2 class="hidden">Comments</h2><p class="empty">No comments yet. <a href="https://news.ycombinator.com/item?id=${story.id}" target="_blank" rel="noreferrer">Join the discussion on Hacker News</a>.</p></section>`;
 	}
 	return html`<section id="comments"><h2 class="hidden">Comments</h2> ${
-		comments.status === "ready" && comments.truncated
-			? html`<p class="notice">Showing the first ${
+		comments.status === "ready" && comments.clipped
+			? html`<p class="notice">Showing ${
 				format.format(comments.loaded)
+			} of ${
+				format.format(comments.total)
 			} comments. <a href="https://news.ycombinator.com/item?id=${story.id}" target="_blank" rel="noreferrer">Continue on Hacker News →</a></p>`
 			: null
 	} ${
 		comments.status === "ready" && comments.failures
-			? html`<p class="notice">Some comments could not be loaded. <button type="button" class="plain" data-act="retry">Retry</button></p>`
+			? html`<p class="notice">Some comments could not be loaded. <button type="button" class="plain" data-act="retry">Retry all</button></p>`
 			: null
 	} <ol class="comments">${
-		comments.tree.map((node) => Comment(node, story.by))
+		comments.nodes.map((node) => Comment(node, story.by))
 	}</ol>${
 		comments.status === "loading"
 			? Loading(
@@ -539,7 +565,11 @@ const Front = () => {
 				: html`<a href="#/top">Return to the front page</a>`
 		}</p></div>`;
 	}
-	return html`<ol class="stories list">${
+	return html`${
+		list.failures
+			? html`<p class="notice">Some stories could not be loaded. <button type="button" class="plain" data-act="feed">Retry</button></p>`
+			: null
+	}<ol class="stories list">${
 		list.items.map((item) => Story(item))
 	}</ol>${Pager(list)}`;
 };
@@ -629,6 +659,8 @@ const render = () => {
 	make(mount, App());
 };
 const pause = () => new Promise((resolve) => setTimeout(resolve, 0));
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const backoff = (attempt) => 300 * 2 ** attempt + Math.random() * 250;
 const pace = (size) => {
 	let gate = null;
 	let done = 0;
@@ -642,52 +674,171 @@ const pace = (size) => {
 		if (gate) await gate;
 	};
 };
-const json = async (url) => {
-	const response = await fetch(url);
-	if (!response.ok) {
-		throw new Error(
-			"Hacker News API request failed (" + response.status + ")",
-		);
-	}
-	return response.json();
-};
-const read = (id) => {
-	const key = String(id);
-	if (!stories.has(key)) {
-		const task = json(`${ORIGIN}/item/${key}.json`).catch((error) => {
-			stories.delete(key);
-			throw error;
+const limiter = (size) => {
+	let active = 0;
+	const queue = [];
+	const next = () => {
+		active--;
+		queue.shift()?.();
+	};
+	return (task) =>
+		new Promise((resolve, reject) => {
+			const run = () => {
+				active++;
+				task().then(resolve, reject).finally(next);
+			};
+			if (active < size) run();
+			else queue.push(run);
 		});
-		stories.set(key, task);
-	}
-	return stories.get(key);
 };
-const keys = (section) => {
-	if (!lists.has(section)) {
-		const task = json(
-			`${ORIGIN}/${SECTIONS[section].endpoint}.json`,
-		).then((ids) => {
-			if (!Array.isArray(ids)) {
-				throw new Error("Hacker News returned an unexpected list.");
+const commentGate = limiter(COMMENT_WORKERS);
+const request = async (url, signal) => {
+	const controller = new AbortController();
+	const timer = setTimeout(
+		() =>
+			controller.abort(
+				new DOMException("Request timed out", "TimeoutError"),
+			),
+		TIMEOUT,
+	);
+	const abort = () => controller.abort(signal.reason);
+	if (signal) {
+		if (signal.aborted) controller.abort(signal.reason);
+		else signal.addEventListener("abort", abort, { once: true });
+	}
+	try {
+		return await fetch(url, { signal: controller.signal });
+	} finally {
+		clearTimeout(timer);
+		if (signal) signal.removeEventListener("abort", abort);
+	}
+};
+const json = async (url, options = {}) => {
+	const signal = options.signal;
+	for (let attempt = 0; ; attempt++) {
+		try {
+			const response = await request(url, signal);
+			if (!response.ok) {
+				const error = new Error(
+					"Hacker News API request failed (" + response.status + ")",
+				);
+				error.status = response.status;
+				if (
+					(response.status === 429 || response.status >= 500)
+					&& attempt < RETRIES
+				) {
+					if (signal?.aborted) throw error;
+					const after = Number(response.headers.get("retry-after"));
+					await wait(
+						Number.isFinite(after) && after > 0
+							? after * 1000
+							: backoff(attempt),
+					);
+					continue;
+				}
+				throw error;
 			}
-			return ids;
-		}).catch((error) => {
-			lists.delete(section);
+			return await response.json();
+		} catch (error) {
+			if (signal?.aborted) throw error;
+			const retryable = error.status === 429 || error.status >= 500
+				|| error.name === "TimeoutError"
+				|| error.name === "AbortError"
+				|| error.name === "TypeError";
+			if (!retryable || attempt >= RETRIES) throw error;
+			await wait(backoff(attempt));
+		}
+	}
+};
+const clearPages = (section) => {
+	const prefix = section + ":";
+	for (const key of pages.keys()) {
+		if (key.startsWith(prefix)) pages.delete(key);
+	}
+};
+const read = (id, options = {}) => {
+	const key = String(id);
+	const entry = stories.get(key);
+	const now = Date.now();
+	const signal = options.signal ?? state.controller?.signal;
+	if (
+		!options.fresh && entry && now - entry.at < ITEM_TTL
+		&& (entry.settled || !entry.signal?.aborted)
+	) {
+		stories.delete(key);
+		stories.set(key, entry);
+		return entry.promise;
+	}
+	const next = {
+		promise: null,
+		at: now,
+		signal,
+		settled: false,
+	};
+	const task = json(`${ORIGIN}/item/${key}.json`, { signal })
+		.then((value) => {
+			next.settled = true;
+			return value;
+		})
+		.catch((error) => {
+			if (stories.get(key) === next) stories.delete(key);
 			throw error;
 		});
-		lists.set(section, task);
+	next.promise = task;
+	stories.set(key, next);
+	if (stories.size > ITEM_CACHE) {
+		for (const [oldKey, old] of stories) {
+			if (stories.size <= ITEM_CACHE) break;
+			if (old === next) continue;
+			stories.delete(oldKey);
+		}
 	}
-	return lists.get(section);
+	return task;
 };
-const feed = async (section, page) => {
+const keys = (section, options = {}) => {
+	const entry = lists.get(section);
+	const now = Date.now();
+	const signal = options.signal ?? state.controller?.signal;
+	if (
+		!options.fresh && entry && now - entry.at < LIST_TTL
+		&& (entry.settled || !entry.signal?.aborted)
+	) {
+		return entry.promise;
+	}
+	const next = {
+		promise: null,
+		at: now,
+		signal,
+		settled: false,
+	};
+	const task = json(
+		`${ORIGIN}/${SECTIONS[section].endpoint}.json`,
+		{ signal },
+	).then((ids) => {
+		if (!Array.isArray(ids)) {
+			throw new Error("Hacker News returned an unexpected list.");
+		}
+		next.settled = true;
+		return ids;
+	}).catch((error) => {
+		if (lists.get(section) === next) lists.delete(section);
+		throw error;
+	});
+	next.promise = task;
+	lists.set(section, next);
+	if (entry) clearPages(section);
+	return task;
+};
+const feed = async (section, page, options = {}) => {
 	const token = ++state.token;
 	const key = section + ":" + page;
-	if (pages.has(key)) {
+	const cached = pages.get(key);
+	if (!options.fresh && cached && Date.now() - cached.at < PAGE_TTL) {
 		state.list = {
 			status: "ready",
 			section,
 			page,
-			...pages.get(key),
+			...cached.data,
 		};
 		render();
 		return;
@@ -702,8 +853,9 @@ const feed = async (section, page) => {
 		failures: 0,
 	};
 	render();
+	const signal = state.controller?.signal;
 	try {
-		const ids = await keys(section);
+		const ids = await keys(section, { signal, fresh: options.fresh });
 		if (token !== state.token) return;
 		const start = (page - 1) * SIZE;
 		const slice = ids.slice(start, start + SIZE);
@@ -714,7 +866,7 @@ const feed = async (section, page) => {
 				total: ids.length,
 				failures: 0,
 			};
-			pages.set(key, data);
+			pages.set(key, { data, at: Date.now() });
 			state.list = { status: "ready", section, page, ...data };
 			render();
 			return;
@@ -741,14 +893,32 @@ const feed = async (section, page) => {
 			while (next < slice.length) {
 				const index = next++;
 				try {
-					const story = await read(slice[index]);
+					const story = await read(slice[index], {
+						signal,
+						fresh: options.fresh,
+					});
 					if (token !== state.token) return;
-					if (story && !story.deleted) items[index] = story;
-					else items[index] = false;
-				} catch {
-					if (token !== state.token) return;
+					if (story && !story.deleted) {
+						items[index] = story;
+					} else if (story?.deleted) {
+						items[index] = {
+							failed: true,
+							id: slice[index],
+							deleted: true,
+						};
+					} else {
+						failures++;
+						list.failures = failures;
+						items[index] = {
+							failed: true,
+							id: slice[index],
+						};
+					}
+				} catch (error) {
+					if (token !== state.token || signal?.aborted) return;
 					failures++;
-					items[index] = false;
+					list.failures = failures;
+					items[index] = { failed: true, id: slice[index] };
 				}
 				flush();
 				await tick();
@@ -765,21 +935,18 @@ const feed = async (section, page) => {
 			cancelAnimationFrame(frame);
 			frame = 0;
 		}
-		const final = items.filter(Boolean);
-		if (!final.length && failures) {
-			throw new Error("The stories could not be loaded.");
-		}
+		const final = items.filter((item) => item !== null);
 		const data = {
 			items: final,
 			more: list.more,
 			total: list.total,
 			failures,
 		};
-		pages.set(key, data);
+		pages.set(key, { data, at: Date.now() });
 		state.list = { status: "ready", section, page, ...data };
 		render();
 	} catch (error) {
-		if (token !== state.token) return;
+		if (token !== state.token || signal?.aborted) return;
 		console.error(error);
 		state.list = {
 			status: "error",
@@ -794,184 +961,262 @@ const feed = async (section, page) => {
 		render();
 	}
 };
+const retryStory = async (id) => {
+	const list = state.list;
+	if (!list || !Array.isArray(list.items)) return;
+	const index = list.items.findIndex((item) =>
+		item?.failed && item.id === id
+	);
+	if (index < 0) return;
+	const token = state.token;
+	const signal = state.controller?.signal;
+	try {
+		const story = await read(id, { fresh: true, signal });
+		if (token !== state.token) return;
+		if (story && !story.deleted) {
+			list.items[index] = story;
+		} else {
+			list.items[index] = {
+				failed: true,
+				id,
+				deleted: !!story?.deleted,
+			};
+		}
+		list.failures = list.items.filter((item) =>
+			item?.failed && !item.deleted
+		).length;
+		const entry = pages.get(list.section + ":" + list.page);
+		if (entry) {
+			entry.data.items = list.items;
+			entry.data.failures = list.failures;
+			entry.at = Date.now();
+		}
+		render();
+	} catch (error) {
+		if (signal?.aborted) return;
+		console.error(error);
+	}
+};
+const initialComments = (total) => ({
+	status: "loading",
+	nodes: [],
+	loaded: 0,
+	count: 0,
+	total,
+	failures: 0,
+	clipped: false,
+	views: new Map(),
+	epoch: 0,
+});
+const makeReader = (token, options = {}) => {
+	const signal = state.controller?.signal;
+	return async (id) => {
+		try {
+			const item = await commentGate(() =>
+				read(id, { signal, fresh: options.fresh })
+			);
+			if (token !== state.token || signal?.aborted) return null;
+			if (!item) {
+				return {
+					id,
+					failed: true,
+					missing: true,
+					children: [],
+					size: 0,
+					clipped: false,
+				};
+			}
+			return {
+				id,
+				item,
+				children: [],
+				size: 1,
+				clipped: false,
+			};
+		} catch (error) {
+			if (token !== state.token || signal?.aborted) return null;
+			console.warn("Could not load comment " + id, error);
+			return {
+				id,
+				failed: true,
+				missing: false,
+				children: [],
+				size: 0,
+				clipped: false,
+			};
+		}
+	};
+};
 const open = async (id) => {
+	state.controller?.abort();
+	state.controller = new AbortController();
 	const token = ++state.token;
+	const signal = state.controller.signal;
+	const prior = stories.get(String(id));
 	state.item = { status: "loading", id };
 	state.comments = null;
 	state.collapsed = new Set();
 	render();
+	let story = null;
 	try {
-		const story = await read(id);
-		if (token !== state.token) return;
-		if (!story || (!story.title && !story.text)) {
-			throw new Error("Story not found");
-		}
-		state.item = { status: "ready", story };
-		state.comments = {
-			status: "loading",
-			tree: [],
-			loaded: 0,
-			total: Number(story.descendants) || 0,
-			failures: 0,
-			truncated: false,
-			views: new Map(),
-			epoch: 0,
-		};
-		render();
-		await discuss(story, token);
+		story = await read(id, { fresh: true, signal });
 	} catch (error) {
-		if (token !== state.token) return;
-		console.error(error);
-		state.item = { status: "error", id, error };
-		render();
-	}
-};
-const branch = (ids, items, counter, limit) => {
-	const tree = [];
-	let clipped = false;
-	for (const id of ids) {
-		if (counter.count >= limit) {
-			clipped = true;
-			break;
-		}
-		const item = items.get(id);
-		if (!item) continue;
-		counter.count++;
-		const children = branch(
-			Array.isArray(item.kids) ? item.kids : [],
-			items,
-			counter,
-			limit,
-		);
-		if (children.clipped) clipped = true;
-		let size = 1;
-		for (const child of children.tree) size += child.size;
-		tree.push({
-			item,
-			children: children.tree,
-			size,
-			clipped: children.clipped,
-		});
-	}
-	return { tree, clipped };
-};
-const discuss = async (story, token) => {
-	const total = Number(story.descendants) || 0;
-	const kids = Array.isArray(story.kids) ? story.kids : [];
-	if (!kids.length) {
-		if (token === state.token) {
-			state.comments = {
-				status: "ready",
-				tree: [],
-				loaded: 0,
-				total: 0,
-				failures: 0,
-				truncated: false,
-				views: new Map(),
-				epoch: 0,
-			};
+		if (token !== state.token || signal.aborted) return;
+		story = prior?.settled
+			? await prior.promise.catch(() => null)
+			: null;
+		if (!story) {
+			console.error(error);
+			state.item = { status: "error", id, error };
 			render();
+			return;
 		}
-		return;
-	}
-	const queue = kids.slice();
-	const seen = new Set(queue);
-	const items = new Map();
-	let loaded = 0;
-	let failures = 0;
-	let timer = 0;
-	let last = 0;
-	let painted = 0;
-	let stopped = false;
-	const tick = pace(16);
-	const commit = () => {
-		if (timer) {
-			clearTimeout(timer);
-			timer = 0;
-		}
-		if (token !== state.token) return;
-		const comments = state.comments;
-		if (!comments || comments.status !== "loading") return;
-		comments.epoch = (comments.epoch || 0) + 1;
-		const counter = { count: 0 };
-		const result = branch(kids, items, counter, LIMIT);
-		comments.tree = result.tree;
-		comments.loaded = counter.count;
-		comments.failures = failures;
-		comments.truncated = total > counter.count;
-		painted = loaded;
-		last = performance.now();
-		render();
-	};
-	const flush = () => {
-		if (token !== state.token || timer || loaded === painted) return;
-		const wait = Math.max(0, 150 - (performance.now() - last));
-		timer = setTimeout(() => {
-			timer = 0;
-			if (token !== state.token || loaded === painted) return;
-			commit();
-		}, wait);
-	};
-	const worker = async () => {
-		while (!stopped && queue.length && loaded < LIMIT) {
-			if (token !== state.token) return;
-			const id = queue.shift();
-			try {
-				const item = await read(id);
-				if (token !== state.token) {
-					stopped = true;
-					return;
-				}
-				if (!item) continue;
-				items.set(item.id, item);
-				loaded++;
-				if (Array.isArray(item.kids)) {
-					for (const kid of item.kids) {
-						if (!seen.has(kid)) {
-							seen.add(kid);
-							queue.push(kid);
-						}
-					}
-				}
-				flush();
-				await tick();
-				if (loaded - painted >= 32) commit();
-			} catch (error) {
-				failures++;
-				console.warn("Could not load comment " + id, error);
-			}
-		}
-	};
-	try {
-		await Promise.all(
-			Array.from({ length: WORKERS }, () => worker()),
-		);
-	} catch (error) {
-		console.error(error);
 	}
 	if (token !== state.token) return;
-	if (timer) {
+	if (!story || (!story.title && !story.text)) {
+		console.error(new Error("Story not found"));
+		state.item = { status: "error", id };
+		render();
+		return;
+	}
+	state.item = { status: "ready", story };
+	state.comments = initialComments(Number(story.descendants) || 0);
+	render();
+	try {
+		await discuss(story, token);
+	} catch (error) {
+		if (token !== state.token || signal.aborted) return;
+		console.error(error);
+		if (state.comments) {
+			state.comments.status = "error";
+			render();
+		}
+	}
+};
+const makeFlusher = (comments, token, stats) => {
+	let timer = 0;
+	let last = 0;
+	const paint = () => {
+		timer = 0;
+		if (token !== state.token || state.comments !== comments) return;
+		comments.epoch++;
+		comments.count = stats.count;
+		comments.loaded = stats.loaded;
+		comments.failures = stats.failures;
+		comments.clipped = stats.clipped;
+		render();
+		last = performance.now();
+	};
+	const flush = () => {
+		if (timer || token !== state.token) return;
+		const delay = Math.max(0, 150 - (performance.now() - last));
+		timer = setTimeout(paint, delay);
+	};
+	const stop = () => {
+		if (!timer) return;
 		clearTimeout(timer);
 		timer = 0;
-	}
-	const counter = { count: 0 };
-	const result = branch(kids, items, counter, LIMIT);
-	state.comments = {
-		status: "ready",
-		tree: result.tree,
-		loaded: counter.count,
-		total,
-		failures,
-		truncated: total > counter.count,
-		views: state.comments?.views ?? new Map(),
-		epoch: state.comments?.epoch ?? 0,
 	};
-	render();
+	return { flush, stop };
+};
+const walkComments = async (ids, parent, context) => {
+	const { token, reader, stats } = context;
+	const pending = [];
+	let next = 0;
+	let clipped = false;
+	const stop = () => stats.count >= LIMIT;
+	const start = () => {
+		while (
+			pending.length < COMMENT_WORKERS && next < ids.length && !stop()
+		) {
+			const id = ids[next++];
+			pending.push({ id, task: reader(id) });
+		}
+	};
+	for (;;) {
+		if (token !== state.token) return false;
+		if (stop()) {
+			if (pending.length || next < ids.length) clipped = true;
+			break;
+		}
+		start();
+		if (!pending.length) break;
+		const { task } = pending.shift();
+		const node = await task;
+		if (token !== state.token) return false;
+		if (!node) return false;
+		stats.count++;
+		if (node.failed) {
+			if (!node.missing) stats.failures++;
+		} else {
+			stats.loaded++;
+		}
+		parent.push(node);
+		context.flush();
+		if (!node.failed) {
+			const kids = Array.isArray(node.item.kids) ? node.item.kids : [];
+			if (kids.length) {
+				const done = await walkComments(
+					kids,
+					node.children,
+					context,
+				);
+				if (!done) return false;
+			}
+		}
+		node.size = 1
+			+ node.children.reduce((sum, child) => sum + child.size, 0);
+		context.flush();
+	}
+	if (clipped) stats.clipped = true;
+	return true;
+};
+const discuss = async (story, token) => {
+	const comments = state.comments;
+	if (!comments || token !== state.token) return;
+	comments.total = Number(story.descendants) || 0;
+	const kids = Array.isArray(story.kids) ? story.kids : [];
+	const stats = {
+		count: 0,
+		loaded: 0,
+		failures: 0,
+		clipped: false,
+	};
+	const { flush, stop } = makeFlusher(comments, token, stats);
+	try {
+		if (kids.length) {
+			const done = await walkComments(kids, comments.nodes, {
+				token,
+				reader: makeReader(token),
+				stats,
+				flush,
+			});
+			if (!done) return;
+		}
+		if (token !== state.token || state.comments !== comments) return;
+		stop();
+		if (stats.count >= LIMIT && comments.total > stats.count) {
+			stats.clipped = true;
+		}
+		comments.status = "ready";
+		comments.count = stats.count;
+		comments.loaded = stats.loaded;
+		comments.failures = stats.failures;
+		comments.clipped = stats.clipped;
+		comments.epoch++;
+		render();
+	} catch (error) {
+		if (token !== state.token || state.comments !== comments) return;
+		stop();
+		console.error(error);
+		comments.status = "error";
+		render();
+	}
 };
 const locate = (nodes, id, chain = []) => {
 	for (const node of nodes) {
 		chain.push(node);
-		if (node.item.id === id) return chain;
+		if (node.id === id) return chain;
 		if (node.children.length) {
 			const found = locate(node.children, id, chain);
 			if (found) return found;
@@ -980,32 +1225,84 @@ const locate = (nodes, id, chain = []) => {
 	}
 	return null;
 };
+const measure = (node) => {
+	node.size = 1
+		+ node.children.reduce((sum, child) => sum + child.size, 0);
+};
 const toggle = (id) => {
 	const comments = state.comments;
 	if (comments?.views) {
-		const chain = locate(comments.tree, id);
+		const chain = locate(comments.nodes, id);
 		if (chain) {
-			for (const node of chain) comments.views.delete(node.item.id);
+			for (const node of chain) comments.views.delete(node.id);
 		}
 	}
 	if (state.collapsed.has(id)) state.collapsed.delete(id);
 	else state.collapsed.add(id);
 	render();
 };
-const retry = (story) => {
+const retry = async (story) => {
+	state.controller?.abort();
+	state.controller = new AbortController();
 	const token = ++state.token;
-	state.comments = {
-		status: "loading",
-		tree: [],
-		loaded: 0,
-		total: Number(story.descendants) || 0,
-		failures: 0,
-		truncated: false,
-		views: new Map(),
-		epoch: 0,
-	};
+	state.comments = initialComments(Number(story.descendants) || 0);
 	render();
-	discuss(story, token);
+	await discuss(story, token);
+};
+const retryComment = async (id) => {
+	const comments = state.comments;
+	if (!comments || comments.status !== "ready") return;
+	const chain = locate(comments.nodes, id);
+	if (!chain) return;
+	const node = chain[chain.length - 1];
+	if (!node.failed || node.missing) return;
+	const token = state.token;
+	const fresh = await makeReader(token, { fresh: true })(id);
+	if (token !== state.token || !fresh || fresh.failed) return;
+	const parent = chain.length > 1
+		? chain[chain.length - 2].children
+		: comments.nodes;
+	const index = parent.indexOf(node);
+	if (index < 0) return;
+	parent[index] = fresh;
+	for (const item of chain) comments.views.delete(item.id);
+	const stats = {
+		count: comments.count,
+		loaded: comments.loaded + 1,
+		failures: Math.max(0, comments.failures - 1),
+		clipped: comments.clipped,
+	};
+	const { flush, stop } = makeFlusher(comments, token, stats);
+	const kids = Array.isArray(fresh.item.kids) ? fresh.item.kids : [];
+	try {
+		if (kids.length) {
+			if (stats.count >= LIMIT) {
+				stats.clipped = true;
+				fresh.clipped = true;
+			} else {
+				const done = await walkComments(kids, fresh.children, {
+					token,
+					reader: makeReader(token),
+					stats,
+					flush,
+				});
+				if (!done) return;
+			}
+		}
+	} catch (error) {
+		if (token !== state.token) return;
+		console.error(error);
+	}
+	if (token !== state.token || state.comments !== comments) return;
+	stop();
+	measure(fresh);
+	for (let i = chain.length - 2; i >= 0; i--) measure(chain[i]);
+	comments.count = stats.count;
+	comments.loaded = stats.loaded;
+	comments.failures = stats.failures;
+	comments.clipped = stats.clipped;
+	comments.epoch++;
+	render();
 };
 const route = () => {
 	if (state.route.name === "list") {
@@ -1020,6 +1317,8 @@ const route = () => {
 	render();
 };
 const navigate = () => {
+	state.controller?.abort();
+	state.controller = new AbortController();
 	state.route = parse();
 	state.list = null;
 	state.item = null;
@@ -1052,10 +1351,18 @@ const act = (button) => {
 	if (name === "theme") cycle();
 	else if (name === "feed") {
 		const list = state.list;
-		if (list) feed(list.section, list.page);
+		if (list) {
+			state.controller?.abort();
+			state.controller = new AbortController();
+			feed(list.section, list.page, { fresh: true });
+		}
 	} else if (name === "open") {
 		const item = state.item;
 		if (item) open(item.id);
+	} else if (name === "story") {
+		retryStory(Number(button.dataset.id));
+	} else if (name === "comment") {
+		retryComment(Number(button.dataset.id));
 	} else if (name === "retry") {
 		const item = state.item;
 		if (item?.story) retry(item.story);

@@ -253,6 +253,7 @@ button.plain:hover, button.plain:focus-visible {
 	align-items: center;
 	gap: 0.3rem;
 	background: none;
+	background-clip: content-box;
 	border: 0;
 	margin: 0;
 	padding: 0;
@@ -419,8 +420,8 @@ li.story .byline {
 .bubble {
 	align-self: center;
 	display: none;
-	flex: 0 0 48px;
-	width: 48px;
+	flex: 0 0 auto;
+	min-width: 48px;
 	text-align: center;
 	text-decoration: none;
 }
@@ -434,6 +435,7 @@ li.story .byline {
 	padding: 2px;
 	position: relative;
 	text-align: center;
+	white-space: nowrap;
 }
 .bubble span:before {
 	border-style: solid;

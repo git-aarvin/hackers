@@ -19,6 +19,12 @@
 	--focus: #808080;
 	--button: light-dark(#fafafa, #181818);
 	--press: light-dark(#e6e6e6, #242424);
+	--guide-1: light-dark(rgb(177 197 230), rgb(55 72 100));
+	--guide-2: light-dark(rgb(202 185 230), rgb(69 57 99));
+	--guide-3: light-dark(rgb(176 213 185), rgb(50 79 59));
+	--guide-4: light-dark(rgb(232 200 166), rgb(89 67 44));
+	--guide-5: light-dark(rgb(230 183 200), rgb(93 55 70));
+	--guide-6: light-dark(rgb(171 210 216), rgb(49 80 85));
 }
 html {
 	font-size: 1rem;
@@ -72,6 +78,10 @@ h1 {
 }
 ::selection {
 	background-color: var(--target);
+}
+#header, footer, nav.morelink, .gap {
+	-webkit-user-select: none;
+	user-select: none;
 }
 a.tag, span.tag {
 	background-color: light-dark(#fffcd7, #3b320d);
@@ -172,7 +182,6 @@ button.plain:hover, button.plain:focus-visible {
 	background: none;
 }
 #header {
-	font-weight: bold;
 	padding: 0 0.6rem;
 	display: flex;
 	flex-direction: column;
@@ -215,10 +224,12 @@ button.plain:hover, button.plain:focus-visible {
 }
 #header a:hover,
 #header a:focus-visible,
-#header a[aria-current="page"],
 #header .toggle:hover,
 #header .toggle:focus-visible {
 	color: var(--ink);
+}
+#header nav a[aria-current="page"] {
+	font-weight: bold;
 }
 #logo a:hover, #logo a:focus-visible {
 	opacity: 0.82;
@@ -246,7 +257,6 @@ button.plain:hover, button.plain:focus-visible {
 	margin: 0;
 	padding: 0;
 	font: inherit;
-	font-weight: bold;
 	line-height: inherit;
 	white-space: nowrap;
 }
@@ -263,7 +273,7 @@ footer {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.75rem 1rem;
-	padding: 2em 0.5em;
+	padding: 1em 0.5em;
 	justify-content: flex-end;
 	width: 100%;
 }
@@ -285,8 +295,12 @@ ol.stories, ol.comments {
 }
 li.story {
 	clear: both;
+	display: flex;
+	align-items: center;
 }
 ol.stories li.story div.liner {
+	flex: 1;
+	min-width: 0;
 	padding-top: 0.25em;
 	padding-bottom: 0.25em;
 	overflow-wrap: break-word;
@@ -329,19 +343,14 @@ li.story .voters {
 	cursor: default;
 	color: var(--dim);
 }
+.upvoter.job {
+	opacity: 0.72;
+}
 .upvoter:before {
 	content: "\25b3";
 	font-size: 1.2rem;
 	font-family: system-ui, monospace, sans-serif;
 	margin-bottom: 0.15rem;
-}
-a.upvoter:hover:before, a.upvoter:focus-visible:before {
-	content: "\25b2";
-	color: var(--accent);
-	-webkit-text-stroke: 1px var(--accent);
-}
-a.upvoter:hover, a.upvoter:focus-visible {
-	color: var(--ink);
 }
 li .link {
 	font-weight: bold;
@@ -364,17 +373,19 @@ li.story .note:focus-visible {
 	color: var(--ink);
 	text-decoration: underline;
 }
-li.story a.tag {
+li.story .tag {
 	vertical-align: middle;
 }
 li .tags {
-	margin-right: 0.25em;
 	display: inline-block;
 	vertical-align: middle;
 	padding: 0;
 }
 li .tags li {
 	display: inline-block;
+}
+li .tags li:first-child .tag {
+	margin-left: 0;
 }
 li .domain {
 	color: var(--dim);
@@ -399,55 +410,78 @@ li.story .byline {
 .byline a:hover, .byline a:focus-visible {
 	text-decoration: underline;
 }
-.count a:hover, .count a:focus-visible {
-	text-decoration: underline;
-}
-.caches summary:hover, .caches summary:focus-visible {
-	color: var(--ink);
-	text-decoration: underline;
-}
-.caches a:hover, .caches a:focus-visible {
-	text-decoration: underline;
-}
 .count {
 	white-space: nowrap;
 }
+.count a:hover, .count a:focus-visible {
+	text-decoration: underline;
+}
 .bubble {
+	align-self: center;
 	display: none;
+	flex: 0 0 48px;
+	width: 48px;
+	text-align: center;
+	text-decoration: none;
 }
-.caches {
-	display: inline-block;
+.bubble span {
+	background-color: light-dark(#ccc, #282828);
+	border: 1px solid light-dark(#ccc, #282828);
+	border-radius: 5px;
+	color: var(--ink);
+	display: block;
+	margin: 0 0.5em;
+	padding: 2px;
 	position: relative;
+	text-align: center;
 }
-.caches summary {
-	list-style: none;
-	cursor: pointer;
-}
-.caches summary::-webkit-details-marker {
-	display: none;
-}
-.caches[open] ul {
+.bubble span:before {
+	border-style: solid;
+	border-width: 0px 6px 3px 0px;
+	border-color: light-dark(#ccc, #282828);
+	border-bottom-right-radius: 13px;
+	bottom: -10px;
+	content: "";
+	display: block;
+	height: 7px;
+	left: 4px;
 	position: absolute;
-	background: var(--page);
-	border: 1px solid var(--border);
-	white-space: nowrap;
-	list-style: none;
-	padding: 0;
-	margin: 0;
+	width: 5.4px;
 	z-index: 10;
 }
-.caches li {
+.bubble span:after {
+	border-bottom-right-radius: 10px;
+	border-color: light-dark(#ccc, #282828);
+	border-style: solid;
+	border-width: 0px 3px 3px 0px;
+	bottom: -10px;
+	content: "";
 	display: block;
-	border-bottom: 1px solid var(--border);
+	height: 7px;
+	left: 5px;
+	position: absolute;
+	width: 10px;
+	z-index: 10;
 }
-.caches li:last-child {
-	border-bottom: 0;
+.bubble.zero span {
+	background-color: light-dark(#d8d8d8, #1c1c1c);
+	color: var(--dim);
 }
-.caches a {
-	color: var(--firm);
-	text-decoration: none;
-	display: block;
-	padding: 3px 7px;
+.bubble.zero span,
+.bubble.zero span:before,
+.bubble.zero span:after {
+	border-color: light-dark(#d8d8d8, #1c1c1c);
+}
+.bubble:hover span,
+.bubble:focus-visible span {
+	background-color: var(--shape);
+	border-color: var(--shape);
+}
+.bubble:hover span:before,
+.bubble:hover span:after,
+.bubble:focus-visible span:before,
+.bubble:focus-visible span:after {
+	border-color: var(--shape);
 }
 nav.morelink {
 	display: flex;
@@ -538,8 +572,25 @@ ol.comments {
 	padding-left: 0;
 }
 .subtree > ol.comments {
-	margin-left: 32px;
+	--guide: var(--guide-1);
+	border-left: 2px solid var(--guide);
+	margin-left: 30px;
 	padding-left: 0;
+}
+.subtree > ol.comments .subtree > ol.comments {
+	--guide: var(--guide-2);
+}
+.subtree > ol.comments .subtree > ol.comments .subtree > ol.comments {
+	--guide: var(--guide-3);
+}
+.subtree > ol.comments .subtree > ol.comments .subtree > ol.comments .subtree > ol.comments {
+	--guide: var(--guide-4);
+}
+.subtree > ol.comments .subtree > ol.comments .subtree > ol.comments .subtree > ol.comments .subtree > ol.comments {
+	--guide: var(--guide-5);
+}
+.subtree > ol.comments .subtree > ol.comments .subtree > ol.comments .subtree > ol.comments .subtree > ol.comments .subtree > ol.comments {
+	--guide: var(--guide-6);
 }
 li.subtree {
 	clear: both;
@@ -765,7 +816,7 @@ li .byline {
 		padding-left: 0;
 	}
 	.subtree > ol.comments {
-		margin-left: 20px;
+		margin-left: 18px;
 	}
 	.voters {
 		margin-left: 0.25em;
@@ -791,97 +842,24 @@ li .byline {
 		margin-left: 0;
 		float: none;
 	}
-	ol.stories.list li.story {
-		display: table;
-		table-layout: fixed;
-		width: 100%;
-	}
 	ol.stories.list li.story div.liner {
-		display: table-cell;
 		padding-top: 0.5em;
 		padding-bottom: 0.75em;
-		width: auto;
 	}
 	ol.stories.list li.story:first-child div.liner {
 		padding-top: 0;
 	}
 	ol.stories.list li.story .bubble {
-		display: table-cell !important;
-		width: 48px;
-		min-width: 48px;
-		text-align: center;
-		text-decoration: none;
-		vertical-align: top;
-		padding-top: 2rem;
-	}
-	ol.stories.list li.story .bubble span:before {
-		border-style: solid;
-		border-width: 0px 6px 3px 0px;
-		border-color: light-dark(#ccc, #282828);
-		border-bottom-right-radius: 13px;
-		bottom: -10px;
-		content: "";
 		display: block;
-		height: 7px;
-		left: 4px;
-		position: absolute;
-		width: 5.4px;
-		z-index: 10;
-	}
-	ol.stories.list li.story .bubble span:after {
-		border-bottom-right-radius: 10px;
-		border-color: light-dark(#ccc, #282828);
-		border-style: solid;
-		border-width: 0px 3px 3px 0px;
-		bottom: -10px;
-		content: "";
-		display: block;
-		height: 7px;
-		left: 5px;
-		position: absolute;
-		width: 10px;
-		z-index: 10;
-	}
-	ol.stories.list li.story .bubble span {
-		background-color: light-dark(#ccc, #282828);
-		border: 1px solid light-dark(#ccc, #282828);
-		border-radius: 5px;
-		color: var(--ink);
-		display: block;
-		margin: 0 0.5em;
-		padding: 2px;
-		position: relative;
-		text-align: center;
-	}
-	ol.stories.list li.story .bubble:hover span,
-	ol.stories.list li.story .bubble:focus-visible span {
-		background-color: var(--shape);
-		border-color: var(--shape);
-	}
-	ol.stories.list li.story .bubble.zero span {
-		background-color: light-dark(#d8d8d8, #1c1c1c);
-		color: var(--dim);
-	}
-	ol.stories.list li.story .bubble.zero span,
-	ol.stories.list li.story .bubble.zero span:before,
-	ol.stories.list li.story .bubble.zero span:after {
-		border-color: light-dark(#d8d8d8, #1c1c1c);
 	}
 	ol.stories.list li.story .count {
 		display: none;
-	}
-	.caches[open] ul {
-		position: fixed;
-		left: 0.5rem;
-		right: 0.5rem;
-		top: auto;
-		white-space: normal;
 	}
 	.toggle .label {
 		display: none;
 	}
 	footer {
-		padding: 1.5em 0.75em;
+		padding: 1em 0.75em;
 	}
 	footer nav {
 		text-align: right;

@@ -6,6 +6,7 @@ const WORKERS = 14;
 const KEY = "hackers:theme";
 const mount = document.getElementById("app");
 const media = window.matchMedia("(prefers-color-scheme: dark)");
+const fine = window.matchMedia("(pointer: fine)");
 const SECTIONS = {
 	top: { label: "Top", endpoint: "topstories" },
 	new: { label: "New", endpoint: "newstories" },
@@ -1064,8 +1065,14 @@ const act = (button) => {
 };
 const press = (event) => {
 	if (event.button) return;
-	if (event.type === "pointerdown" && event.pointerType === "touch") return;
-	if (event.type === "click" && event.detail) return;
+	if (
+		event.type === "pointerdown"
+		&& (!fine.matches || event.pointerType === "touch")
+	) return;
+	if (
+		event.type === "click" && event.detail && fine.matches
+		&& event.pointerType !== "touch"
+	) return;
 	const node = event.target.closest?.("a[href^='#/']");
 	if (node) {
 		if (

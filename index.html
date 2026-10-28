@@ -7,6 +7,8 @@
 		<meta name="theme-color" content="#fb651e">
 		<title>Hackers</title>
 		<link rel="icon" href="favicon.svg" type="image/svg+xml">
+		<link rel="preconnect" href="https://hacker-news.firebaseio.com" crossorigin>
+		<link rel="modulepreload" href="vendor.js">
 		<script>
 (() => {
 	try {
@@ -18,7 +20,7 @@
 			|| (mode === "system"
 				&& matchMedia("(prefers-color-scheme: dark)").matches);
 		document.documentElement.dataset.theme = dark ? "dark" : "light";
-		document.documentElement.dataset.themeMode = mode;
+		document.documentElement.dataset.mode = mode;
 	} catch {}
 })();
 		</script>
@@ -28,6 +30,6 @@
 		<div id="app"></div><noscript
 		><p style="max-width:40rem;margin:2rem auto;padding:0 1rem;font:16px/1.5 'helvetica neue',arial,sans-serif;">
 				Hackers needs JavaScript to load stories from the Hacker News API.
-			</p></noscript><script src="index.js" defer></script>
+			</p></noscript><script type="module" src="index.js"></script>
 	</body>
 </html>

@@ -229,12 +229,7 @@ const Time = (seconds) => {
 		iso(Number(seconds))
 	}">${ago(Number(seconds))}</time>`;
 };
-const Caches = (url) =>
-	html`<span aria-hidden="true"> | </span><details class="caches" name="caches"><summary>caches</summary><ul><li><a href="https://web.archive.org/web/2/${
-		encodeURIComponent(url)
-	}" target="_blank" rel="noreferrer">Archive.org</a></li><li><a href="https://ghostarchive.org/search?term=${
-		encodeURIComponent(url)
-	}" target="_blank" rel="noreferrer">Ghostarchive</a></li></ul></details>`;
+const Gap = () => html`<span class="gap">&ensp;</span>`;
 const labels = (item) => {
 	const tags = [];
 	const title = item.title || "";
@@ -300,7 +295,7 @@ const labels = (item) => {
 const Tags = (item) => {
 	const tags = labels(item);
 	if (!tags.length) return null;
-	return html`<ul class="tags" aria-label="Tags">${
+	return html`${Gap()}<ul class="tags" aria-label="Tags">${
 		tags.map((tag) =>
 			html`<li>${
 				tag.href
@@ -310,7 +305,7 @@ const Tags = (item) => {
 		)
 	}</ul>`;
 };
-const Story = (item) => {
+const Story = (item, showComments = true) => {
 	if (item === false) return null;
 	if (!item) return Placeholder();
 	const source = link(item.url);
@@ -320,41 +315,49 @@ const Story = (item) => {
 	const job = item.type === "job";
 	return html`<li class="story ${
 		item.dead ? "deleted" : ""
-	}"><div class="liner h-entry"><div class="voters"> ${
-		job
-			? html`<span class="upvoter disabled" title="Voting is not available for job posts" aria-disabled="true">${
-				item.score ?? 0
-			}</span>`
-			: html`<a class="upvoter" href="https://news.ycombinator.com/item?id=${item.id}" target="_blank" rel="noreferrer" title="Score on Hacker News">${
-				item.score ?? 0
-			}</a>`
-	} </div><div class="details"><span role="heading" aria-level="1" class="link h-cite u-repost-of"> <a class="u-url" href="${href}" rel="${
+	}"><div class="liner h-entry"><div class="voters"><span class="upvoter disabled${
+		job ? " job" : ""
+	}" title="${
+		job ? "Voting is not available for job posts" : "Voting is not available"
+	}" aria-disabled="true">${item.score ?? 0}</span></div><div class="details"><span role="heading" aria-level="1" class="link h-cite u-repost-of"><a class="u-url" href="${href}" rel="${
 		source ? "ugc noreferrer" : null
-	}">${item.title || "Untitled"}</a> </span> ${
+	}">${item.title || "Untitled"}</a></span>${
 		item.text
 			? html`<a class="note" href="#/item/${item.id}" title="This story has text" aria-label="This story has text">☶</a>`
 			: null
-	} ${Tags(item)} ${
+	}${Tags(item)}${
 		host
-			? html`<a class="domain" href="https://news.ycombinator.com/from?site=${
+			? html`${Gap()}<a class="domain" href="https://news.ycombinator.com/from?site=${
 				encodeURIComponent(host)
 			}" target="_blank" rel="noreferrer">${host}</a>`
 			: null
-	} <div class="byline"><span>by </span> ${
+	}<div class="byline">${
 		item.by
 			? html`<a class="u-author h-card" href="https://news.ycombinator.com/user?id=${
 				encodeURIComponent(item.by)
 			}" target="_blank" rel="noreferrer">${item.by}</a>`
 			: html`<span class="gone">unknown</span>`
-	} ${item.time ? Time(item.time) : null} ${
-		source ? Caches(source) : null
-	} <span class="count"><span aria-hidden="true"> | </span><a role="heading" aria-level="2" href="#/item/${item.id}">${
-		label(comments)
-	}</a></span></div></div></div><a href="#/item/${item.id}" class="bubble ${
-		comments ? "" : "zero"
-	}" aria-label="${
-		label(comments)
-	}"><span>${comments}</span></a></li>`;
+	}${
+		item.time
+			? html`${Gap()}<a href="https://news.ycombinator.com/item?id=${item.id}" target="_blank" rel="noreferrer">${
+				Time(item.time)
+			}</a>`
+			: null
+	}${
+		showComments
+			? html`<span class="count">${Gap()}<a role="heading" aria-level="2" href="#/item/${item.id}">${
+				label(comments)
+			}</a></span>`
+			: null
+	}</div></div></div>${
+		showComments
+			? html`<a href="#/item/${item.id}" class="bubble ${
+				comments ? "" : "zero"
+			}" aria-label="${
+				label(comments)
+			}"><span>${comments}</span></a>`
+			: null
+	}</li>`;
 };
 const Placeholder = () =>
 	html`<li class="story skeleton"><div class="liner"><div class="voters"><span class="bar"></span></div><div class="details"><div class="bar"></div><div class="bar"></div></div></div></li>`;
@@ -409,7 +412,7 @@ const Comment = (node, submitter) => {
 		collapsed ? "false" : "true"
 	}" aria-label="${action} comment${
 		author ? " by " + author : ""
-	}" title="${action} comment"></button></div><div class="details"><div class="byline"> ${
+	}" title="${action} comment"></button></div><div class="details"><div class="byline">${
 		author
 			? html`<a class="${
 				same ? "author submitter" : ""
@@ -417,19 +420,19 @@ const Comment = (node, submitter) => {
 				encodeURIComponent(author)
 			}" target="_blank" rel="noreferrer">${author}</a>`
 			: html`<span class="gone">deleted</span>`
-	} ${
+	}${
 		item.time
-			? html`<a href="https://news.ycombinator.com/item?id=${item.id}" target="_blank" rel="noreferrer">${
+			? html`${Gap()}<a href="https://news.ycombinator.com/item?id=${item.id}" target="_blank" rel="noreferrer">${
 				Time(item.time)
 			}</a>`
 			: null
-	} <span aria-hidden="true"> | </span> <a href="https://news.ycombinator.com/reply?id=${item.id}" target="_blank" rel="noreferrer">reply</a> ${
+	}${
 		collapsed && replies
 			? html`<span class="summary"> | ${
 				format.format(replies)
 			} ${replies === 1 ? "reply" : "replies"} hidden</span>`
 			: null
-	} </div> ${
+	}</div> ${
 		!collapsed
 			? html`<div role="heading" aria-level="3" class="text">${
 				item.deleted
@@ -536,7 +539,7 @@ const Front = () => {
 		}</p></div>`;
 	}
 	return html`<ol class="stories list">${
-		list.items.map(Story)
+		list.items.map((item) => Story(item))
 	}</ol>${Pager(list)}`;
 };
 const Thread = () => {
@@ -552,7 +555,7 @@ const Thread = () => {
 		);
 	}
 	const story = item.story;
-	return html`<ol class="stories">${Story(story)}</ol>${
+	return html`<ol class="stories">${Story(story, false)}</ol>${
 		story.text
 			? html`<div class="content"><div class="prose">${
 				markup(story.text)
@@ -1061,6 +1064,7 @@ const act = (button) => {
 };
 const press = (event) => {
 	if (event.button) return;
+	if (event.type === "pointerdown" && event.pointerType === "touch") return;
 	if (event.type === "click" && event.detail) return;
 	const node = event.target.closest?.("a[href^='#/']");
 	if (node) {
